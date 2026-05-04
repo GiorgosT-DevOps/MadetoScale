@@ -17,6 +17,7 @@ const backTopButtons = document.querySelectorAll("[data-back-top]");
 const stickyContact = document.querySelector("[data-sticky-contact]");
 const stickyContactRing = document.querySelector("[data-sticky-contact-ring]");
 const siteFooter = document.querySelector(".footer");
+const workMarqueeRows = document.querySelectorAll(".work-marquee__row");
 
 function applyTheme(theme) {
   root.dataset.theme = theme;
@@ -59,6 +60,7 @@ window.addEventListener("resize", updateStickyContact);
 updateStickyContact();
 
 let lastHeaderScrollY = window.scrollY;
+let lastHeaderTouchY = null;
 
 function closeMobileNavigation() {
   mobileToggle?.setAttribute("aria-expanded", "false");
@@ -67,19 +69,74 @@ function closeMobileNavigation() {
   dropdownToggles.forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
 }
 
+function setHeaderHiddenForDirection(isMovingDown) {
+  if (!siteHeader) return;
+
+  const navIsOpen = nav?.classList.contains("is-open");
+  const currentScrollY = Math.max(window.scrollY, 0);
+  if (navIsOpen || currentScrollY < 120) {
+    siteHeader.classList.remove("is-hidden");
+    return;
+  }
+
+  if (isMovingDown && currentScrollY > 320) {
+    siteHeader.classList.add("is-hidden");
+  } else if (!isMovingDown) {
+    siteHeader.classList.remove("is-hidden");
+  }
+}
+
 function updateHeaderState() {
   if (!siteHeader) return;
 
   const currentScrollY = Math.max(window.scrollY, 0);
-  const isScrollingDown = currentScrollY > lastHeaderScrollY;
+  const scrollDelta = currentScrollY - lastHeaderScrollY;
+  const isScrollingDown = scrollDelta > 6;
+  const isScrollingUp = scrollDelta < -6;
   const navIsOpen = nav?.classList.contains("is-open");
   siteHeader.classList.toggle("is-compact", currentScrollY > 18 || Boolean(navIsOpen));
-  siteHeader.classList.toggle("is-hidden", currentScrollY > 360 && isScrollingDown && !navIsOpen);
+
+  if (navIsOpen || currentScrollY < 120) {
+    siteHeader.classList.remove("is-hidden");
+  } else if (currentScrollY > 320 && isScrollingDown) {
+    siteHeader.classList.add("is-hidden");
+  } else if (isScrollingUp) {
+    siteHeader.classList.remove("is-hidden");
+  }
+
   lastHeaderScrollY = currentScrollY;
 }
 
 window.addEventListener("scroll", updateHeaderState, { passive: true });
 window.addEventListener("resize", updateHeaderState);
+window.addEventListener(
+  "wheel",
+  (event) => {
+    if (Math.abs(event.deltaY) < 6) return;
+    setHeaderHiddenForDirection(event.deltaY > 0);
+  },
+  { passive: true }
+);
+window.addEventListener(
+  "touchstart",
+  (event) => {
+    lastHeaderTouchY = event.touches[0]?.clientY ?? null;
+  },
+  { passive: true }
+);
+window.addEventListener(
+  "touchmove",
+  (event) => {
+    const currentTouchY = event.touches[0]?.clientY;
+    if (currentTouchY === undefined || lastHeaderTouchY === null) return;
+    const touchDelta = lastHeaderTouchY - currentTouchY;
+    if (Math.abs(touchDelta) > 8) {
+      setHeaderHiddenForDirection(touchDelta > 0);
+      lastHeaderTouchY = currentTouchY;
+    }
+  },
+  { passive: true }
+);
 updateHeaderState();
 
 function setupCustomCursor() {
@@ -137,6 +194,20 @@ function setupCustomCursor() {
 }
 
 setupCustomCursor();
+
+function updateWorkMarqueePace() {
+  if (!workMarqueeRows.length) return;
+
+  const pixelsPerSecond = 68;
+  workMarqueeRows.forEach((row) => {
+    const distance = row.scrollWidth / 2;
+    const duration = Math.max(18, distance / pixelsPerSecond);
+    row.style.setProperty("--work-marquee-duration", `${duration.toFixed(2)}s`);
+  });
+}
+
+updateWorkMarqueePace();
+window.addEventListener("resize", updateWorkMarqueePace);
 
 mobileToggle?.addEventListener("click", () => {
   const isOpen = mobileToggle.getAttribute("aria-expanded") === "true";
