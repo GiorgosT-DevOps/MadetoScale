@@ -2,6 +2,7 @@ const root = document.documentElement;
 const storageKey = "made-to-scale-theme";
 const themeToggle = document.querySelector("[data-theme-toggle]");
 const mobileToggle = document.querySelector("[data-mobile-toggle]");
+const siteHeader = document.querySelector(".site-header");
 const nav = document.querySelector("[data-primary-nav]");
 const dropdownToggles = document.querySelectorAll("[data-dropdown-toggle]");
 const contactForm = document.querySelector("[data-contact-form]");
@@ -57,11 +58,95 @@ window.addEventListener("scroll", updateStickyContact, { passive: true });
 window.addEventListener("resize", updateStickyContact);
 updateStickyContact();
 
+let lastHeaderScrollY = window.scrollY;
+
+function closeMobileNavigation() {
+  mobileToggle?.setAttribute("aria-expanded", "false");
+  nav?.classList.remove("is-open");
+  document.body.classList.remove("nav-open");
+  dropdownToggles.forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
+}
+
+function updateHeaderState() {
+  if (!siteHeader) return;
+
+  const currentScrollY = Math.max(window.scrollY, 0);
+  const isScrollingDown = currentScrollY > lastHeaderScrollY;
+  const navIsOpen = nav?.classList.contains("is-open");
+  siteHeader.classList.toggle("is-compact", currentScrollY > 18 || Boolean(navIsOpen));
+  siteHeader.classList.toggle("is-hidden", currentScrollY > 360 && isScrollingDown && !navIsOpen);
+  lastHeaderScrollY = currentScrollY;
+}
+
+window.addEventListener("scroll", updateHeaderState, { passive: true });
+window.addEventListener("resize", updateHeaderState);
+updateHeaderState();
+
+function setupCustomCursor() {
+  const canUseCursor = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const prefersLessMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!canUseCursor || prefersLessMotion) return;
+
+  const cursor = document.createElement("div");
+  cursor.className = "custom-cursor";
+  cursor.setAttribute("aria-hidden", "true");
+  document.body.append(cursor);
+  document.body.classList.add("has-custom-cursor");
+
+  const interactiveSelector = "a, button, summary, label, input, select, textarea, [data-cursor-grow]";
+  let cursorX = window.innerWidth / 2;
+  let cursorY = window.innerHeight / 2;
+  let cursorIsActive = false;
+  let cursorFrame = 0;
+
+  function moveCursor() {
+    cursorFrame = 0;
+    cursor.style.transform = `translate(${cursorX}px, ${cursorY}px) translate(-50%, -50%) ${
+      cursorIsActive ? "scale(1)" : "scale(0.9)"
+    }`;
+  }
+
+  function scheduleCursorMove() {
+    if (cursorFrame) return;
+    cursorFrame = window.requestAnimationFrame(moveCursor);
+  }
+
+  function setCursorActive(isActive) {
+    if (cursorIsActive === isActive) return;
+    cursorIsActive = isActive;
+    cursor.classList.toggle("is-active", isActive);
+  }
+
+  window.addEventListener(
+    "pointermove",
+    (event) => {
+      cursorX = event.clientX;
+      cursorY = event.clientY;
+      const hoveredElement = document.elementFromPoint(cursorX, cursorY);
+      setCursorActive(Boolean(hoveredElement?.closest(interactiveSelector)));
+      cursor.classList.add("is-visible");
+      scheduleCursorMove();
+    },
+    { passive: true }
+  );
+
+  window.addEventListener("pointerleave", () => {
+    cursor.classList.remove("is-visible");
+    setCursorActive(false);
+  });
+}
+
+setupCustomCursor();
+
 mobileToggle?.addEventListener("click", () => {
   const isOpen = mobileToggle.getAttribute("aria-expanded") === "true";
   mobileToggle.setAttribute("aria-expanded", String(!isOpen));
   nav?.classList.toggle("is-open", !isOpen);
   document.body.classList.toggle("nav-open", !isOpen);
+  if (isOpen) {
+    dropdownToggles.forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
+  }
+  updateHeaderState();
 });
 
 dropdownToggles.forEach((toggle) => {
@@ -80,11 +165,16 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    dropdownToggles.forEach((toggle) => toggle.setAttribute("aria-expanded", "false"));
-    mobileToggle?.setAttribute("aria-expanded", "false");
-    nav?.classList.remove("is-open");
-    document.body.classList.remove("nav-open");
+    closeMobileNavigation();
     closeModal();
+  }
+});
+
+nav?.addEventListener("click", (event) => {
+  const link = event.target.closest("a");
+  if (link && nav.classList.contains("is-open")) {
+    closeMobileNavigation();
+    updateHeaderState();
   }
 });
 
@@ -101,9 +191,38 @@ if ("IntersectionObserver" in window) {
     { threshold: 0.12 }
   );
 
-  revealItems.forEach((item) => revealObserver.observe(item));
+revealItems.forEach((item) => revealObserver.observe(item));
 } else {
   revealItems.forEach((item) => item.classList.add("is-visible"));
+}
+
+function setFormStatus(statusNode, message, isError = false) {
+  if (!statusNode) return;
+  statusNode.textContent = message;
+  statusNode.classList.toggle("is-error", isError);
+  statusNode.removeAttribute("hidden");
+}
+
+async function submitFormPayload(endpoint, payload) {
+  if (!endpoint) {
+    throw new Error("Missing form endpoint.");
+  }
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok || result?.success === false) {
+    throw new Error(result?.message || "The enquiry could not be sent.");
+  }
+
+  return result;
 }
 
 function setError(fieldName, message) {
@@ -125,23 +244,25 @@ function getCheckedServices() {
   );
 }
 
-function buildEmailBody(data) {
-  const lines = [
-    `Name: ${data.get("name")}`,
-    `Email: ${data.get("email")}`,
-    `Phone: ${data.get("phone") || "Not provided"}`,
-    `Business: ${data.get("business") || "Not provided"}`,
-    `Services: ${getCheckedServices().join(", ")}`,
-    `Referral: ${data.get("referral") || "Not provided"}`,
-    "",
-    "Project message:",
-    data.get("message")
-  ];
-
-  return encodeURIComponent(lines.join("\n"));
+function buildContactPayload(data) {
+  const email = String(data.get("email") || "").trim();
+  return {
+    _subject: "New Made to Scale project enquiry",
+    _template: "table",
+    _captcha: "false",
+    _replyto: email,
+    Name: String(data.get("name") || "").trim(),
+    Email: email,
+    Phone: String(data.get("phone") || "Not provided").trim(),
+    Business: String(data.get("business") || "Not provided").trim(),
+    Services: getCheckedServices().join(", "),
+    Referral: String(data.get("referral") || "Not provided").trim(),
+    Message: String(data.get("message") || "").trim(),
+    Consent: "Accepted"
+  };
 }
 
-contactForm?.addEventListener("submit", (event) => {
+contactForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const data = new FormData(contactForm);
@@ -192,15 +313,31 @@ contactForm?.addEventListener("submit", (event) => {
 
   const success = contactForm.querySelector("[data-form-success]");
   const submitButton = contactForm.querySelector('button[type="submit"]');
-  const emailAddress = contactForm.dataset.email || "tomarasg@icloud.com";
-  const subject = encodeURIComponent("New Made to Scale project enquiry");
-  const body = buildEmailBody(data);
+  const originalButtonText = submitButton?.dataset.originalText || submitButton?.textContent || "Send enquiry";
+  const endpoint = contactForm.dataset.formEndpoint;
 
-  success?.removeAttribute("hidden");
-  submitButton.textContent = "Enquiry ready";
-  submitButton.disabled = true;
+  if (submitButton) {
+    submitButton.dataset.originalText = originalButtonText;
+    submitButton.textContent = "Sending...";
+    submitButton.disabled = true;
+  }
+  setFormStatus(success, "Sending your enquiry...");
 
-  window.location.href = `mailto:${emailAddress}?subject=${subject}&body=${body}`;
+  try {
+    await submitFormPayload(endpoint, buildContactPayload(data));
+    contactForm.reset();
+    setFormStatus(success, "Thanks. Your enquiry has been sent.");
+    if (submitButton) {
+      submitButton.textContent = originalButtonText;
+      submitButton.disabled = false;
+    }
+  } catch (error) {
+    setFormStatus(success, "Sorry, the enquiry could not be sent. Please try again or email tomarasg@icloud.com.", true);
+    if (submitButton) {
+      submitButton.textContent = originalButtonText;
+      submitButton.disabled = false;
+    }
+  }
 });
 
 function openModal() {
@@ -280,23 +417,26 @@ function validatePlannerStep(step) {
   return isValid;
 }
 
-function buildPlannerBody(data) {
+function buildPlannerPayload(data) {
   const projectTypes = Array.from(plannerForm.querySelectorAll('input[name="project_type"]:checked')).map(
     (input) => input.value
   );
-  return encodeURIComponent(
-    [
-      `Name: ${data.get("planner_name")}`,
-      `Email: ${data.get("planner_email")}`,
-      `Business: ${data.get("planner_company") || "Not provided"}`,
-      `Project types: ${projectTypes.join(", ")}`,
-      `Budget range: ${data.get("planner_budget") || "Not sure"}`,
-      `Timeline: ${data.get("planner_timeline") || "Flexible"}`,
-      "",
-      "Project brief:",
-      data.get("planner_message") || "Not provided"
-    ].join("\n")
-  );
+  const email = String(data.get("planner_email") || "").trim();
+
+  return {
+    _subject: "New Made to Scale project planner enquiry",
+    _template: "table",
+    _captcha: "false",
+    _replyto: email,
+    Name: String(data.get("planner_name") || "").trim(),
+    Email: email,
+    Business: String(data.get("planner_company") || "Not provided").trim(),
+    "Project types": projectTypes.join(", "),
+    "Budget range": String(data.get("planner_budget") || "Not sure").trim(),
+    Timeline: String(data.get("planner_timeline") || "Flexible").trim(),
+    "Project brief": String(data.get("planner_message") || "Not provided").trim(),
+    Consent: "Accepted"
+  };
 }
 
 plannerForm?.querySelectorAll("[data-planner-next]").forEach((button) => {
@@ -339,7 +479,7 @@ plannerForm?.addEventListener("click", (event) => {
   }
 });
 
-plannerForm?.addEventListener("submit", (event) => {
+plannerForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const steps = Array.from(plannerForm.querySelectorAll("[data-planner-step]"));
   const currentIndex = Number(plannerForm.dataset.step || "0");
@@ -351,12 +491,33 @@ plannerForm?.addEventListener("submit", (event) => {
   if (String(data.get("planner_url") || "").trim()) return;
 
   const success = plannerForm.querySelector("[data-planner-success]");
-  const emailAddress = plannerForm.dataset.email || "tomarasg@icloud.com";
-  const subject = encodeURIComponent("New Made to Scale project planner enquiry");
-  const body = buildPlannerBody(data);
+  const submitButton = plannerForm.querySelector('button[type="submit"]');
+  const originalButtonText = submitButton?.dataset.originalText || submitButton?.textContent || "Send planner enquiry";
+  const endpoint = plannerForm.dataset.formEndpoint;
 
-  success?.removeAttribute("hidden");
-  window.location.href = `mailto:${emailAddress}?subject=${subject}&body=${body}`;
+  if (submitButton) {
+    submitButton.dataset.originalText = originalButtonText;
+    submitButton.textContent = "Sending...";
+    submitButton.disabled = true;
+  }
+  setFormStatus(success, "Sending your planner enquiry...");
+
+  try {
+    await submitFormPayload(endpoint, buildPlannerPayload(data));
+    plannerForm.reset();
+    updatePlannerStep(0);
+    setFormStatus(success, "Thanks. Your planner enquiry has been sent.");
+    if (submitButton) {
+      submitButton.textContent = originalButtonText;
+      submitButton.disabled = false;
+    }
+  } catch (error) {
+    setFormStatus(success, "Sorry, the planner enquiry could not be sent. Please try again or email tomarasg@icloud.com.", true);
+    if (submitButton) {
+      submitButton.textContent = originalButtonText;
+      submitButton.disabled = false;
+    }
+  }
 });
 
 sliders.forEach((slider) => {
