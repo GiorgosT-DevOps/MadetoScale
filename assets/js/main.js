@@ -18,6 +18,9 @@ const stickyContact = document.querySelector("[data-sticky-contact]");
 const stickyContactRing = document.querySelector("[data-sticky-contact-ring]");
 const siteFooter = document.querySelector(".footer");
 const workMarqueeRows = document.querySelectorAll(".work-marquee__row");
+const launchIntro = document.querySelector("[data-launch-intro]");
+const launchFrameStopProgress = 0.55;
+const launchContactRevealProgress = launchFrameStopProgress + 0.01;
 
 function applyTheme(theme) {
   root.dataset.theme = theme;
@@ -41,11 +44,27 @@ themeToggle?.addEventListener("click", () => {
   applyTheme(nextTheme);
 });
 
+function getLaunchIntroProgress() {
+  if (!launchIntro) return 1;
+
+  const scrollableDistance = Math.max(launchIntro.offsetHeight - window.innerHeight, 1);
+  const passedDistance = Math.min(Math.max(-launchIntro.getBoundingClientRect().top, 0), scrollableDistance);
+  return passedDistance / scrollableDistance;
+}
+
+function isOverLaunchIntro() {
+  if (!launchIntro) return false;
+
+  const introBounds = launchIntro.getBoundingClientRect();
+  return introBounds.bottom > 8 && introBounds.top < window.innerHeight;
+}
+
 function updateStickyContact() {
   if (!stickyContact) return;
 
-  const isMobileWheel = window.matchMedia("(max-width: 680px)").matches;
-  const hasPassedIntro = isMobileWheel || window.scrollY > window.innerHeight / 3;
+  const hasPassedIntro = launchIntro
+    ? getLaunchIntroProgress() >= launchContactRevealProgress
+    : window.scrollY > window.innerHeight / 3;
   const footerBuffer = siteFooter ? siteFooter.offsetHeight + 120 : 1000;
   const isNearFooter = window.innerHeight + window.scrollY >= document.body.offsetHeight - footerBuffer;
   stickyContact.classList.toggle("is-visible", hasPassedIntro && !isNearFooter);
@@ -94,6 +113,7 @@ function updateHeaderState() {
   const isScrollingDown = scrollDelta > 6;
   const isScrollingUp = scrollDelta < -6;
   const navIsOpen = nav?.classList.contains("is-open");
+  siteHeader.classList.toggle("is-over-launch", isOverLaunchIntro());
   siteHeader.classList.toggle("is-compact", currentScrollY > 18 || Boolean(navIsOpen));
 
   if (navIsOpen || currentScrollY < 120) {
@@ -194,6 +214,151 @@ function setupCustomCursor() {
 }
 
 setupCustomCursor();
+
+function setupLaunchIntro() {
+  if (!launchIntro) return;
+
+  const canvas = launchIntro.querySelector("[data-launch-canvas]");
+  if (!canvas?.getContext) return;
+
+  const context = canvas.getContext("2d");
+  const frameCount = Math.max(Number(canvas.dataset.frameCount) || 0, 1);
+  const framesPath = canvas.dataset.framesPath || "";
+  const progressBar = launchIntro.querySelector("[data-launch-progress]");
+  const content = launchIntro.querySelector("[data-launch-content]");
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const images = new Array(frameCount);
+  const maxConcurrentLoads = 6;
+  let nextPreloadIndex = 0;
+  let activePreloads = 0;
+  let activeFrame = 0;
+  let renderedFrame = -1;
+  let frameRequest = 0;
+  function clampProgress(value) {
+    return Math.min(Math.max(value, 0), 1);
+  }
+
+  function smoothStep(value) {
+    const progress = clampProgress(value);
+    return progress * progress * (3 - 2 * progress);
+  }
+
+  function getFrameUrl(index) {
+    return `${framesPath}frame_${String(index + 1).padStart(4, "0")}.webp`;
+  }
+
+  function prepareCanvas(image) {
+    if (canvas.width === image.naturalWidth && canvas.height === image.naturalHeight) return;
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+  }
+
+  function renderFrame(index) {
+    const image = images[index];
+    if (!image || !image.complete || !image.naturalWidth) {
+      loadFrame(index);
+      return;
+    }
+
+    if (renderedFrame === index) return;
+    prepareCanvas(image);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0);
+    renderedFrame = index;
+  }
+
+  function loadFrame(index) {
+    if (images[index]) return images[index];
+
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+      if (index === activeFrame || renderedFrame < 0) {
+        renderFrame(index);
+      }
+    };
+    image.src = getFrameUrl(index);
+    images[index] = image;
+    return image;
+  }
+
+  function preloadFrames() {
+    if (prefersReducedMotion) return;
+
+    while (activePreloads < maxConcurrentLoads && nextPreloadIndex < frameCount) {
+      const index = nextPreloadIndex;
+      nextPreloadIndex += 1;
+
+      if (images[index]) continue;
+
+      activePreloads += 1;
+      const image = new Image();
+      image.decoding = "async";
+      image.onload = () => {
+        activePreloads -= 1;
+        if (index === activeFrame || renderedFrame < 0) {
+          renderFrame(index);
+        }
+        preloadFrames();
+      };
+      image.onerror = () => {
+        activePreloads -= 1;
+        preloadFrames();
+      };
+      image.src = getFrameUrl(index);
+      images[index] = image;
+    }
+  }
+
+  function getScrollProgress() {
+    const scrollableDistance = Math.max(launchIntro.offsetHeight - window.innerHeight, 1);
+    const passedDistance = Math.min(Math.max(-launchIntro.getBoundingClientRect().top, 0), scrollableDistance);
+    return passedDistance / scrollableDistance;
+  }
+
+  function updateLaunchIntro() {
+    frameRequest = 0;
+    const progress = prefersReducedMotion ? 1 : getScrollProgress();
+    const frameProgress = prefersReducedMotion ? 0 : clampProgress(progress / launchFrameStopProgress);
+    const textProgress = prefersReducedMotion ? 1 : smoothStep((frameProgress - 0.05) / 0.28);
+    const actionsProgress = prefersReducedMotion ? 1 : smoothStep((progress - launchFrameStopProgress) / 0.08);
+    activeFrame = Math.round(frameProgress * (frameCount - 1));
+    launchIntro.style.setProperty("--launch-progress", progress.toFixed(4));
+
+    if (progressBar) {
+      progressBar.style.transform = `scaleX(${Math.max(0.02, frameProgress).toFixed(4)})`;
+    }
+
+    if (content) {
+      content.style.setProperty("--launch-copy-opacity", "1");
+      content.style.setProperty("--launch-text-opacity", textProgress.toFixed(3));
+      content.style.setProperty("--launch-text-y", `${(30 - 30 * textProgress).toFixed(2)}px`);
+      content.style.setProperty("--launch-text-blur", `${(12 - 12 * textProgress).toFixed(2)}px`);
+      content.style.setProperty("--launch-actions-opacity", actionsProgress.toFixed(3));
+      content.style.setProperty("--launch-actions-y", `${(24 - 24 * actionsProgress).toFixed(2)}px`);
+      content.style.setProperty("--launch-actions-scale", (0.94 + 0.06 * actionsProgress).toFixed(3));
+      content.style.setProperty("--launch-actions-blur", `${(10 - 10 * actionsProgress).toFixed(2)}px`);
+      content.style.setProperty("--launch-copy-y", `${(-18 * Math.min(progress, 1)).toFixed(2)}px`);
+    }
+
+    launchIntro.classList.toggle("is-actions-ready", actionsProgress > 0.94);
+
+    renderFrame(activeFrame);
+  }
+
+  function requestLaunchUpdate() {
+    if (frameRequest) return;
+    frameRequest = window.requestAnimationFrame(updateLaunchIntro);
+  }
+
+  loadFrame(0);
+  preloadFrames();
+  requestLaunchUpdate();
+  window.addEventListener("scroll", requestLaunchUpdate, { passive: true });
+  window.addEventListener("resize", requestLaunchUpdate);
+}
+
+setupLaunchIntro();
 
 function updateWorkMarqueePace() {
   if (!workMarqueeRows.length) return;
