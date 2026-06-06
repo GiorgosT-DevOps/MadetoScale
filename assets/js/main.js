@@ -780,3 +780,172 @@ backTopButtons.forEach((button) => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 });
+
+/* ==========================================================================
+   Redesign additions: ticker pacing, logo-wall parallax,
+   scale-card cursor preview + touch accordion, planner service prefill
+   ========================================================================== */
+
+const prefersReducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const finePointerQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
+
+/* Auto-pace any horizontal ticker (.logo-ticker / .cap-ticker__row) so the
+   loop speed is consistent regardless of how much content it holds. */
+function paceTickers() {
+  const tickerRows = document.querySelectorAll("[data-ticker]");
+  const pixelsPerSecond = 70;
+  tickerRows.forEach((row) => {
+    const distance = row.scrollWidth / 2;
+    if (!distance) return;
+    const duration = Math.max(20, distance / pixelsPerSecond);
+    row.style.setProperty("--ticker-duration", `${duration.toFixed(2)}s`);
+  });
+}
+
+paceTickers();
+window.addEventListener("resize", paceTickers);
+
+/* Subtle parallax on the foundation logo wall as the pointer moves. */
+function setupLogoWallParallax() {
+  const wall = document.querySelector("[data-logo-wall]");
+  if (!wall || prefersReducedMotionQuery.matches || !finePointerQuery.matches) return;
+
+  const section = wall.closest(".foundation") || wall;
+  let frame = 0;
+
+  section.addEventListener("pointermove", (event) => {
+    if (frame) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      const bounds = section.getBoundingClientRect();
+      const ratio = (event.clientX - bounds.left) / bounds.width - 0.5;
+      wall.style.transform = `translateX(${(ratio * 26).toFixed(2)}px)`;
+    });
+  });
+
+  section.addEventListener("pointerleave", () => {
+    wall.style.transform = "translateX(0)";
+  });
+}
+
+setupLogoWallParallax();
+
+/* Interactive scale rows: floating cursor-follow preview on desktop,
+   tap-to-reveal accordion on touch devices. */
+function setupScaleRows() {
+  const scaleSection = document.querySelector("[data-scale]");
+  if (!scaleSection) return;
+
+  const rows = Array.from(scaleSection.querySelectorAll("[data-scale-row]"));
+  const preview = scaleSection.querySelector("[data-scale-preview]");
+  const previewLabel = preview?.querySelector("[data-scale-preview-label]");
+  const previewHint = preview?.querySelector("[data-scale-preview-hint]");
+  const canHover = finePointerQuery.matches && !prefersReducedMotionQuery.matches;
+
+  if (canHover && preview) {
+    let frame = 0;
+    let pointerX = 0;
+    let pointerY = 0;
+
+    const movePreview = () => {
+      frame = 0;
+      preview.style.left = `${pointerX}px`;
+      preview.style.top = `${pointerY}px`;
+    };
+
+    rows.forEach((row) => {
+      row.addEventListener("pointerenter", () => {
+        if (previewLabel) previewLabel.textContent = row.dataset.previewLabel || "";
+        if (previewHint) previewHint.textContent = row.dataset.previewHint || "";
+        preview.classList.add("is-visible");
+      });
+      row.addEventListener("pointermove", (event) => {
+        pointerX = event.clientX;
+        pointerY = event.clientY;
+        if (!frame) frame = window.requestAnimationFrame(movePreview);
+      });
+      row.addEventListener("pointerleave", () => {
+        preview.classList.remove("is-visible");
+      });
+    });
+  } else {
+    /* Touch / reduced-motion: first tap opens the inline panel, second tap follows the link. */
+    rows.forEach((row) => {
+      row.addEventListener("click", (event) => {
+        if (!row.classList.contains("is-open")) {
+          event.preventDefault();
+          rows.forEach((other) => {
+            if (other !== row) other.classList.remove("is-open");
+          });
+          row.classList.add("is-open");
+        }
+      });
+    });
+  }
+}
+
+setupScaleRows();
+
+/* Project planner: preselect a service from ?service= and tune CTA copy. */
+function setupPlannerServicePrefill() {
+  if (!plannerForm) return;
+
+  const params = new URLSearchParams(window.location.search);
+  const serviceParam = (params.get("service") || "").toLowerCase().trim();
+  if (!serviceParam) return;
+
+  // Map service slugs -> the checkbox value used in the planner + a CTA verb.
+  const serviceMap = {
+    websites: { value: "Website", cta: "Plan my website" },
+    website: { value: "Website", cta: "Plan my website" },
+    "web-apps": { value: "Web app", cta: "Discuss a web app" },
+    "web-app": { value: "Web app", cta: "Discuss a web app" },
+    "booking-systems": { value: "Booking system", cta: "Build a booking flow" },
+    booking: { value: "Booking system", cta: "Build a booking flow" },
+    "seo-local-visibility": { value: "SEO & local visibility", cta: "Improve my visibility" },
+    seo: { value: "SEO & local visibility", cta: "Improve my visibility" },
+    "ai-integrations": { value: "AI integration", cta: "Explore AI automation" },
+    ai: { value: "AI integration", cta: "Explore AI automation" },
+    "maintenance-care": { value: "Maintenance", cta: "Choose a care plan" },
+    maintenance: { value: "Maintenance", cta: "Choose a care plan" },
+    branding: { value: "Branding", cta: "Shape my brand" }
+  };
+
+  const match = serviceMap[serviceParam];
+  if (!match) return;
+
+  // Tick the matching project_type checkbox (add one if the value is new).
+  const checkboxes = Array.from(plannerForm.querySelectorAll('input[name="project_type"]'));
+  let target = checkboxes.find(
+    (box) => box.value.toLowerCase() === match.value.toLowerCase()
+  );
+
+  if (!target) {
+    const grid = plannerForm.querySelector(".planner-choice-grid");
+    if (grid) {
+      const label = document.createElement("label");
+      label.className = "choice";
+      label.innerHTML = `<input type="checkbox" name="project_type" value="${match.value}"> ${match.value}`;
+      grid.append(label);
+      target = label.querySelector("input");
+    }
+  }
+
+  if (target) target.checked = true;
+
+  // Update the submit button copy to match the chosen service.
+  const submitButton = plannerForm.querySelector('button[type="submit"]');
+  if (submitButton && match.cta) {
+    submitButton.textContent = match.cta;
+    submitButton.dataset.originalText = match.cta;
+  }
+
+  // Surface a small confirmation in the planner intro if present.
+  const introTitle = document.querySelector("[data-planner-intro-service]");
+  if (introTitle) {
+    introTitle.textContent = match.value;
+    introTitle.closest("[data-planner-service-wrap]")?.removeAttribute("hidden");
+  }
+}
+
+setupPlannerServicePrefill();
